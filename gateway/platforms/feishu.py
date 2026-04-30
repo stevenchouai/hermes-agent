@@ -2698,11 +2698,26 @@ class FeishuAdapter(BasePlatformAdapter):
                 text = f"{hint}\n\n{text}" if text else hint
 
         reply_to_message_id = (
-            getattr(message, "parent_id", None)
+            getattr(message, "reply_target_message_id", None)
+            or getattr(message, "parent_id", None)
             or getattr(message, "upper_message_id", None)
             or None
         )
         reply_to_text = await self._fetch_message_text(reply_to_message_id) if reply_to_message_id else None
+
+        # Feishu has two related concepts:
+        # - root_id: message-thread root in a normal group chat.
+        # - thread_id: native topic/thread id when Feishu exposes one.
+        # Preserve a stable routing target in source.thread_id so gateway delivery
+        # can reply back in-thread.  Prefer root_id for normal message threads;
+        # fall back to native thread_id, then parent/reply target when root_id is
+        # absent in older/event variants.
+        thread_id = (
+            getattr(message, "root_id", None)
+            or getattr(message, "thread_id", None)
+            or reply_to_message_id
+            or None
+        )
 
         logger.info(
             "[Feishu] Inbound %s message received: id=%s type=%s chat_id=%s text=%r media=%d",
@@ -2723,7 +2738,7 @@ class FeishuAdapter(BasePlatformAdapter):
             chat_type=self._resolve_source_chat_type(chat_info=chat_info, event_chat_type=chat_type),
             user_id=sender_profile["user_id"],
             user_name=sender_profile["user_name"],
-            thread_id=getattr(message, "thread_id", None) or None,
+            thread_id=thread_id,
             user_id_alt=sender_profile["user_id_alt"],
         )
         normalized = MessageEvent(
@@ -4051,7 +4066,13 @@ class FeishuAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]],
     ) -> Any:
         last_error: Optional[Exception] = None
-        active_reply_to = reply_to
+        # Feishu/Lark threads are addressed by replying to the root/parent
+        # message with reply_in_thread=True. Gateway delivery preserves a
+        # thread_id in metadata, but many send call sites don't pass reply_to.
+        # Mirror OpenClaw's resolution: explicit reply_to wins; otherwise use
+        # metadata.thread_id as the reply target so responses stay in-thread.
+        thread_target = str((metadata or {}).get("thread_id") or "").strip() or None
+        active_reply_to = reply_to or thread_target
         for attempt in range(_FEISHU_SEND_ATTEMPTS):
             try:
                 response = await self._send_raw_message(
