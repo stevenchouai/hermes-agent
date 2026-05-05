@@ -108,6 +108,67 @@ Types: `feat`, `fix`, `refactor`, `docs`, `test`, `ci`, `chore`, `perf`
 git push -u origin HEAD
 ```
 
+### Upstream/fork contribution pattern
+
+Use this when `origin` is your fork and `upstream` is the official repository,
+especially if the working tree has unrelated local changes. Keep the PR small
+and targeted:
+
+```bash
+# Inspect remotes and auth first
+git remote -v
+gh auth status
+
+# Inspect and save only the desired tracked diff so unrelated local work does not leak
+# into the PR. If intended files are staged or untracked, unstage/add -N first or
+# manually copy them into the worktree.
+git status --short -- path/to/relevant_file.py tests/relevant_test.py
+git diff -- path/to/relevant_file.py tests/relevant_test.py > /tmp/target-pr.patch
+
+# Prefer an isolated worktree from official upstream main when the current checkout
+# is dirty or already on another feature branch. This avoids stashing/restoring
+# user work.
+git fetch upstream main
+git worktree add -b fix/short-description /tmp/repo-fix-short-description upstream/main
+cd /tmp/repo-fix-short-description
+
+# Apply the patch if it still matches; if it fails, stop and manually port the
+# small intended change rather than force-applying stale context.
+if git apply --check /tmp/target-pr.patch; then
+  git apply /tmp/target-pr.patch
+else
+  echo "Patch no longer applies cleanly; inspect upstream files and port manually."
+  exit 1
+fi
+
+# Verify, commit, push to fork, open PR against upstream
+python -m py_compile path/to/changed.py
+python -m pytest tests/relevant_test.py -q -o 'addopts='
+git diff --check
+git add path/to/changed.py tests/relevant_test.py
+git commit -m "fix(scope): short description"
+git push -u origin HEAD
+gh pr create --repo OWNER/UPSTREAM_REPO --base main --head YOUR_USER:$(git branch --show-current) \
+  --title "fix(scope): short description" --body-file /tmp/pr-body.md
+```
+
+Pitfalls:
+- If the patch was generated from an older branch and `git apply --check` fails
+  on `upstream/main`, do not force it. Inspect the upstream hunk area and
+  re-implement the minimal intent against current code.
+- Create and review `/tmp/pr-body.md` before `gh pr create --body-file`.
+- Remove accidental support symlinks/files created only to run tests in the
+  worktree (e.g. `venv`) before `git status`, commit, and push.
+
+After creation, verify the PR metadata and CI/check status:
+
+```bash
+gh pr view --repo OWNER/UPSTREAM_REPO --json url,state,mergeable,statusCheckRollup
+gh pr checks --repo OWNER/UPSTREAM_REPO
+```
+
+If `gh pr checks` reports no checks, say so rather than implying CI passed.
+
 ### Create the PR
 
 **With gh:**
@@ -353,6 +414,21 @@ git push -u origin HEAD
 
 # 8. Merge when green (see Section 6)
 ```
+
+## Operator reporting discipline
+
+After creating, updating, monitoring, or merging a PR, report like an operator,
+not like a log dump. Default to 3-5 bullets:
+
+- **What changed:** one sentence in plain language.
+- **Impact:** who benefits or what risk/friction is reduced.
+- **Status:** branch/PR link, CI state, merge state, or "no checks configured".
+- **Need from user:** say "none" unless a specific decision, credential, review,
+  or unblocker is required.
+
+Do not paste routine command transcripts, full check rollups, or long file lists
+unless the user asks or a failure needs diagnosis. If CI is still running, say
+what is pending and whether you will keep monitoring.
 
 ## Useful PR Commands Reference
 
