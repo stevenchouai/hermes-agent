@@ -4102,15 +4102,18 @@ class FeishuAdapter(BasePlatformAdapter):
         reply_to: Optional[str],
         metadata: Optional[Dict[str, Any]],
     ) -> Any:
+        effective_reply_to = reply_to
+        if not effective_reply_to and metadata and metadata.get("thread_id"):
+            effective_reply_to = metadata.get("reply_to_message_id")
         reply_in_thread = bool((metadata or {}).get("thread_id"))
-        if reply_to:
+        if effective_reply_to:
             body = self._build_reply_message_body(
                 content=payload,
                 msg_type=msg_type,
                 reply_in_thread=reply_in_thread,
                 uuid_value=str(uuid.uuid4()),
             )
-            request = self._build_reply_message_request(reply_to, body)
+            request = self._build_reply_message_request(effective_reply_to, body)
             return await asyncio.to_thread(self._client.im.v1.message.reply, request)
 
         body = self._build_create_message_body(
@@ -4254,13 +4257,16 @@ class FeishuAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]],
     ) -> Any:
         last_error: Optional[Exception] = None
-        # Feishu/Lark threads are addressed by replying to the root/parent
-        # message with reply_in_thread=True. Gateway delivery preserves a
-        # thread_id in metadata, but many send call sites don't pass reply_to.
-        # Mirror OpenClaw's resolution: explicit reply_to wins; otherwise use
-        # metadata.thread_id as the reply target so responses stay in-thread.
-        thread_target = str((metadata or {}).get("thread_id") or "").strip() or None
-        active_reply_to = reply_to or thread_target
+        # Feishu/Lark threads are addressed by replying to the triggering or
+        # root/parent message with reply_in_thread=True. Gateway delivery
+        # preserves thread_id in metadata for grouping, but the Feishu reply API
+        # expects a message_id reply target. Prefer the explicit reply target,
+        # then metadata.reply_to_message_id when present; fall back to thread_id
+        # only for legacy call sites that carried no separate reply target.
+        metadata_map = metadata or {}
+        metadata_reply_target = str(metadata_map.get("reply_to_message_id") or "").strip() or None
+        thread_target = str(metadata_map.get("thread_id") or "").strip() or None
+        active_reply_to = reply_to or metadata_reply_target or thread_target
         for attempt in range(_FEISHU_SEND_ATTEMPTS):
             try:
                 response = await self._send_raw_message(
