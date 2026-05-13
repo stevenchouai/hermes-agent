@@ -490,6 +490,22 @@ def test_base_gateway_metadata_for_resumed_telegram_dm_topic_uses_direct_topic()
     }
 
 
+def test_base_gateway_metadata_marks_feishu_topics_with_reply_anchor():
+    source = SimpleNamespace(
+        platform=Platform.FEISHU,
+        chat_type="group",
+        thread_id="omt_1961069e480f9ce6",
+    )
+
+    metadata = _thread_metadata_for_source(source, "om_trigger")
+
+    assert metadata == {
+        "thread_id": "omt_1961069e480f9ce6",
+        "reply_to_message_id": "om_trigger",
+    }
+
+
+
 def test_base_gateway_replies_to_triggering_message_for_telegram_dm_topic():
     """Private DM topic lanes should anchor replies to the active user message."""
     event = SimpleNamespace(

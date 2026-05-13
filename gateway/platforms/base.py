@@ -54,6 +54,13 @@ def _thread_metadata_for_source(source, reply_to_message_id: str | None = None) 
     if thread_id is None:
         return None
     metadata = {"thread_id": thread_id}
+    if _platform_name(getattr(source, "platform", None)) == "feishu":
+        # Feishu topics only honor thread routing through message.reply with
+        # reply_in_thread=true, so metadata-only sends still need the original
+        # message id as their reply target.
+        anchor = reply_to_message_id or getattr(source, "message_id", None)
+        if anchor is not None:
+            metadata["reply_to_message_id"] = str(anchor)
     if _platform_name(getattr(source, "platform", None)) == "telegram" and getattr(source, "chat_type", None) == "dm":
         metadata["telegram_dm_topic_reply_fallback"] = True
         tid = str(thread_id)

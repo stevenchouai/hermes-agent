@@ -13382,6 +13382,13 @@ class GatewayRunner:
             anchor = reply_to_message_id or getattr(source, "message_id", None)
             if anchor is not None:
                 metadata["telegram_reply_to_message_id"] = str(anchor)
+        if getattr(source, "platform", None) == Platform.FEISHU:
+            # Feishu topics only honor thread routing through message.reply
+            # with reply_in_thread=true. Carry the original message id for
+            # metadata-only send paths such as status/progress/background.
+            anchor = reply_to_message_id or getattr(source, "message_id", None)
+            if anchor is not None:
+                metadata["reply_to_message_id"] = str(anchor)
         return metadata
 
     @staticmethod

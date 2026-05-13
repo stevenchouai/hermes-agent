@@ -321,6 +321,56 @@ class TestRunBackgroundTask:
         }
 
     @pytest.mark.asyncio
+    async def test_feishu_topic_completion_preserves_reply_anchor_metadata(self, monkeypatch):
+        """Background completion metadata must let Feishu reply inside the topic."""
+        from gateway import run as gateway_run
+
+        runner = _make_runner()
+        runner._resolve_session_agent_runtime = MagicMock(
+            return_value=("test-model", {"api_key": "test-key"})
+        )
+        runner._resolve_session_reasoning_config = MagicMock(return_value=None)
+        runner._load_service_tier = MagicMock(return_value=None)
+        runner._resolve_turn_agent_config = MagicMock(
+            return_value={
+                "model": "test-model",
+                "runtime": {"api_key": "test-key"},
+                "request_overrides": None,
+            }
+        )
+        runner._run_in_executor_with_context = AsyncMock(
+            return_value={"final_response": "done", "messages": []}
+        )
+        monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {})
+
+        mock_adapter = AsyncMock()
+        mock_adapter.send = AsyncMock()
+        mock_adapter.extract_media = MagicMock(return_value=([], "done"))
+        mock_adapter.extract_images = MagicMock(return_value=([], "done"))
+        runner.adapters[Platform.FEISHU] = mock_adapter
+
+        source = SessionSource(
+            platform=Platform.FEISHU,
+            user_id="ou_user",
+            chat_id="oc_chat",
+            chat_type="group",
+            thread_id="omt_topic",
+        )
+
+        await runner._run_background_task(
+            "say hello",
+            source,
+            "bg_test",
+            event_message_id="om_trigger",
+        )
+
+        mock_adapter.send.assert_called_once()
+        assert mock_adapter.send.call_args.kwargs["metadata"] == {
+            "thread_id": "omt_topic",
+            "reply_to_message_id": "om_trigger",
+        }
+
+    @pytest.mark.asyncio
     async def test_agent_cleanup_runs_when_background_agent_raises(self):
         """Temporary background agents must be cleaned up on error paths too."""
         runner = _make_runner()
