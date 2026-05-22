@@ -455,6 +455,36 @@ def _escape_markdown_text(text: str) -> str:
     return _MARKDOWN_SPECIAL_CHARS_RE.sub(r"\\\1", text)
 
 
+# Pre-compiled regex to strip backslash escapes that some LLMs (notably MiMo)
+# emit for markdown-special characters.  Feishu's post-type ``md`` renderer
+# does not understand these escapes and shows them literally, so we remove
+# them before outbound delivery.  Control-character escapes (``\n``, ``\t``,
+# ``\r``) are left untouched because Python already decoded them at parse
+# time — only literal ``\<char>`` pairs in the *string value* need cleaning.
+#
+# Pattern: a literal backslash followed by a markdown-special character.
+# The character class mirrors ``_MARKDOWN_SPECIAL_CHARS_RE`` minus ``\``
+# itself (handled by a second pass) and plus the common paired delimiters.
+_STRIP_MD_ESCAPE_RE = re.compile(r"\\([`*_{}\[\]()#+\-!|>~])")
+
+
+def _strip_unnecessary_md_escapes(text: str) -> str:
+    """Remove LLM-emitted backslash escapes that break Feishu md rendering.
+
+    Some models (e.g. MiMo) wrap markdown-special characters in backslash
+    escapes (``\\(``, ``\\)``, ``\\-``, etc.).  Feishu's ``md`` tag does not
+    interpret these, so the raw ``\\`` appears in the rendered message.
+    Stripping them restores normal Feishu markdown rendering.
+    """
+    # First pass: strip ``\<special-char>`` → ``<special-char>``
+    cleaned = _STRIP_MD_ESCAPE_RE.sub(r"\1", text)
+    # Second pass: ``\\\\`` → ``\\`` (literal backslash).
+    # Must run after the first pass so ``\\\\(`` → ``\\(`` → ``\\(`` is
+    # handled correctly (the inner ``\\`` was already stripped).
+    cleaned = cleaned.replace("\\\\", "\\")
+    return cleaned
+
+
 def _to_boolean(value: Any) -> bool:
     return value is True or value == 1 or value == "true"
 
@@ -2248,8 +2278,14 @@ class FeishuAdapter(BasePlatformAdapter):
             return fallback
 
     def format_message(self, content: str) -> str:
-        """Feishu text messages are plain text by default."""
-        return content.strip()
+        """Prepare outbound content for Feishu delivery.
+
+        Strips LLM-emitted backslash escapes (e.g. ``\\(``, ``\\)``) that
+        some models produce around markdown-special characters.  Feishu's
+        ``md`` renderer does not interpret these escapes and shows them
+        literally, so removing them restores proper rendering.
+        """
+        return _strip_unnecessary_md_escapes(content.strip())
 
     # =========================================================================
     # Inbound event handlers
@@ -4309,7 +4345,10 @@ class FeishuAdapter(BasePlatformAdapter):
         effective_reply_to = reply_to
         if not effective_reply_to and metadata and metadata.get("thread_id"):
             effective_reply_to = metadata.get("reply_to_message_id")
-        reply_in_thread = bool((metadata or {}).get("thread_id"))
+        # Always reply in thread when replying to a message — this makes
+        # bot responses appear in a thread under the user's message instead
+        # of as a quote-reply in the main chat flow.
+        reply_in_thread = bool(effective_reply_to)
         if effective_reply_to:
             body = self._build_reply_message_body(
                 content=payload,
