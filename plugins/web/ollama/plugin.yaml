@@ -1,0 +1,7 @@
+name: web-ollama
+version: 1.0.0
+description: "Ollama web search via local Ollama daemon's experimental endpoint — no API key required."
+author: NousResearch
+kind: backend
+provides_web_providers:
+  - ollama

@@ -140,7 +140,7 @@ def _get_backend() -> str:
     keys manually without running setup.
     """
     configured = (_load_web_config().get("backend") or "").lower().strip()
-    if configured in {"parallel", "firecrawl", "tavily", "exa", "searxng", "brave-free", "ddgs", "xai"}:
+    if configured in {"parallel", "firecrawl", "tavily", "exa", "searxng", "brave-free", "ddgs", "xai", "ollama"}:
         return configured
 
     # Fallback for manual / legacy config — pick the highest-priority
@@ -226,6 +226,12 @@ def _is_backend_available(backend: str) -> bool:
         try:
             from tools.xai_http import has_xai_credentials
             return has_xai_credentials()
+        except Exception:
+            return False
+    if backend == "ollama":
+        try:
+            from plugins.web.ollama.provider import OllamaWebSearchProvider
+            return OllamaWebSearchProvider().is_available()
         except Exception:
             return False
     return False
@@ -1367,11 +1373,11 @@ async def web_crawl_tool(
 def check_web_api_key() -> bool:
     """Check whether the configured web backend is available."""
     configured = _load_web_config().get("backend", "").lower().strip()
-    if configured in {"exa", "parallel", "firecrawl", "tavily", "searxng", "brave-free", "ddgs"}:
+    if configured in {"exa", "parallel", "firecrawl", "tavily", "searxng", "brave-free", "ddgs", "xai", "ollama"}:
         return _is_backend_available(configured)
     return any(
         _is_backend_available(backend)
-        for backend in ("exa", "parallel", "firecrawl", "tavily", "searxng", "brave-free", "ddgs")
+        for backend in ("exa", "parallel", "firecrawl", "tavily", "searxng", "brave-free", "ddgs", "xai")
     )
 
 
